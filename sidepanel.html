@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>豆包生图监控台</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <main class="app">
+    <section class="header" aria-label="豆包生图监控台概览">
+      <div class="title-row">
+        <div class="brand">
+          <div class="app-logo" aria-hidden="true">
+            <span class="app-logo-eye"></span>
+          </div>
+          <div class="title">
+            <h1>豆包生图监控台</h1>
+            <span id="subtitle">正在监控 0 个豆包标签页</span>
+          </div>
+        </div>
+
+        <div class="health" id="healthBadge" aria-live="polite">
+          <span class="dot"></span>
+          <span id="healthText">检测中</span>
+        </div>
+      </div>
+
+      <div class="stats" aria-label="任务状态统计">
+        <div class="stat stat-total">
+          <span class="stat-icon" aria-hidden="true">▧</span>
+          <strong id="statTotal">0</strong>
+          <span>全部</span>
+        </div>
+        <div class="stat stat-generating">
+          <span class="stat-icon" aria-hidden="true">⚡</span>
+          <strong id="statGenerating">0</strong>
+          <span>生成中</span>
+        </div>
+        <div class="stat stat-done">
+          <span class="stat-icon" aria-hidden="true">✓</span>
+          <strong id="statDone">0</strong>
+          <span>已完成</span>
+        </div>
+        <div class="stat stat-action">
+          <span class="stat-icon" aria-hidden="true">➤</span>
+          <strong id="statNeedAction">0</strong>
+          <span>可发送</span>
+        </div>
+      </div>
+
+      <div class="prompt-box">
+        <div class="prompt-label">
+          <span>预设提示词</span>
+          <button class="link-button" id="togglePresetManager" type="button">配置列表</button>
+        </div>
+
+        <select id="promptPresetSelect" class="preset-select" aria-label="选择预设提示词"></select>
+
+        <div class="prompt-label prompt-label-inline">
+          <span>统一发送内容</span>
+          <span id="charCount">0 字</span>
+        </div>
+        <textarea id="promptInput" placeholder="输入要发送给豆包的内容">继续生成图片</textarea>
+
+        <div class="preset-manager" id="presetManager" hidden>
+          <div class="preset-manager-title">配置预设提示词</div>
+          <div class="preset-manager-tip">每行一个预设。保存后会出现在上方下拉列表里。</div>
+          <textarea id="presetEditor" class="preset-editor" placeholder="继续生成图片&#10;保持当前风格，继续生成下一张图片"></textarea>
+          <div class="preset-actions">
+            <button class="ghost" id="addCurrentPreset" type="button">加入当前内容</button>
+            <button class="ghost" id="resetPresets" type="button">恢复默认</button>
+            <button class="secondary" id="savePresets" type="button">保存预设</button>
+          </div>
+        </div>
+
+        <div class="button-row single">
+          <button class="primary" id="sendAll" type="button">
+            <span aria-hidden="true">➤</span>
+            <span>发送全部</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="toolbar" aria-label="任务筛选工具栏">
+      <div class="tabs-filter" id="filters" role="tablist" aria-label="筛选任务状态">
+        <button class="chip active" data-filter="all" type="button">全部</button>
+        <button class="chip" data-filter="generating" type="button">生成中</button>
+        <button class="chip" data-filter="done" type="button">已完成</button>
+        <button class="chip" data-filter="waiting" type="button">等待中</button>
+        <button class="chip" data-filter="failed" type="button">失败</button>
+        <button class="chip optional-filter" data-filter="limited" type="button">已达上限</button>
+        <button class="chip optional-filter" data-filter="offline" type="button">未连接</button>
+      </div>
+      <button class="small-action" id="refresh" type="button">
+        <span aria-hidden="true">↻</span>
+        <span>刷新</span>
+      </button>
+    </section>
+
+    <section class="task-list" id="taskList" aria-label="豆包任务列表"></section>
+    <div class="empty-tip" id="emptyTip">
+      没有匹配的豆包生图标签页。<br />请先打开豆包页面，然后点击刷新。
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
