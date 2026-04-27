@@ -1,5 +1,6 @@
 const DOUBAO_URL_PATTERNS = [
-  'https://*.doubao.com/chat/*'
+  'https://doubao.com/*',
+  'https://*.doubao.com/*'
 ];
 
 const DEFAULT_PROMPTS = [
@@ -27,6 +28,8 @@ let isProgrammaticPromptChange = false;
 let activeTabId = null;
 let activeWindowId = null;
 let promptSaveTimer = null;
+let autoSendEnabled = false;
+const autoSentTaskTokens = new Set();
 
 const PROMPT_SAVE_DEBOUNCE_MS = 500;
 const PERIODIC_REFRESH_MS = 10000;
@@ -43,6 +46,7 @@ const promptPresetSelect = document.getElementById('promptPresetSelect');
 const presetManager = document.getElementById('presetManager');
 const presetEditor = document.getElementById('presetEditor');
 const togglePresetManager = document.getElementById('togglePresetManager');
+const autoSendToggle = document.getElementById('autoSendToggle');
 
 function showToast(message) {
   toast.textContent = message;
@@ -119,12 +123,54 @@ function renderPresetEditor() {
   presetEditor.value = promptPresets.join('\n');
 }
 
+function renderAutoSendToggle() {
+  autoSendToggle.checked = autoSendEnabled;
+}
+
+function getTaskAutoSendToken(task) {
+  if (!task) return '';
+  return `${task.tabId}:${task.imageCount || 0}:${task.title || ''}`;
+}
+
+function syncAutoSentTokens() {
+  const validTokens = new Set(
+    tasks
+      .filter(task => task.status === 'done')
+      .map(task => getTaskAutoSendToken(task))
+      .filter(Boolean)
+  );
+
+  for (const token of Array.from(autoSentTaskTokens)) {
+    if (!validTokens.has(token)) {
+      autoSentTaskTokens.delete(token);
+    }
+  }
+}
+
+function markTaskAutoSent(task) {
+  const token = getTaskAutoSendToken(task);
+  if (token) autoSentTaskTokens.add(token);
+}
+
+function clearTaskAutoSent(task) {
+  const prefix = `${task?.tabId}:`;
+  if (!task?.tabId) return;
+
+  for (const token of Array.from(autoSentTaskTokens)) {
+    if (token.startsWith(prefix)) {
+      autoSentTaskTokens.delete(token);
+    }
+  }
+}
+
 async function loadSettings() {
-  const settings = await chrome.storage.local.get(['promptText', 'promptPresets']);
+  const settings = await chrome.storage.local.get(['promptText', 'promptPresets', 'autoSendEnabled']);
   promptPresets = normalizePresets(settings.promptPresets);
   promptInput.value = settings.promptText || promptPresets[0] || DEFAULT_PROMPT;
+  autoSendEnabled = Boolean(settings.autoSendEnabled);
   renderPresetSelect();
   renderPresetEditor();
+  renderAutoSendToggle();
   updateCharCount();
 }
 
@@ -150,13 +196,21 @@ async function savePromptPresets(nextPresets) {
   renderPresetEditor();
 }
 
+async function saveAutoSendEnabled(nextValue) {
+  autoSendEnabled = Boolean(nextValue);
+  renderAutoSendToggle();
+  await chrome.storage.local.set({ autoSendEnabled });
+}
+
+function isCreateImagePage(task) {
+  return String(task?.url || '').startsWith('https://www.doubao.com/chat/create-image');
+}
+
 function isSendableTask(task) {
   if (!task) return false;
   if (task.isLimited || task.status === 'limited') return false;
   if (task.status === 'offline' || task.status === 'generating') return false;
 
-  // 按当前业务规则，只给已结束/可继续的标签页发送。
-  // generating 由 content.js 通过 div[data-state="closed"] 判断并自动跳过。
   return ['done', 'waiting', 'failed'].includes(task.status) && task.hasInput !== false;
 }
 
@@ -209,7 +263,7 @@ async function updateActiveTabMarker(options = {}) {
 
 function setBusy(busy) {
   isSending = busy;
-  document.querySelectorAll('button, select, textarea').forEach(element => {
+  document.querySelectorAll('button, select, textarea, input[type="checkbox"]').forEach(element => {
     if (element.id !== 'refresh') {
       element.disabled = busy;
     }
@@ -238,7 +292,6 @@ async function ensureContentScript(tabId) {
       files: ['content.js']
     });
   } catch {
-    // 有些页面已注入或不允许再次注入，忽略后继续尝试发消息。
   }
 }
 
@@ -277,9 +330,10 @@ async function getTabStatus(tab, index) {
 
 async function loadTabs() {
   const tabs = await chrome.tabs.query({ url: DOUBAO_URL_PATTERNS });
-  const selectedTabs = tabs.sort((a, b) => a.id - b.id);
+  const selectedTabs = tabs.sort((a, b) => b.id - a.id);
 
   tasks = await Promise.all(selectedTabs.map((tab, index) => getTabStatus(tab, index)));
+  syncAutoSentTokens();
   await updateActiveTabMarker({ shouldRender: false });
   render();
 }
@@ -350,6 +404,7 @@ function renderTasks() {
 function render() {
   renderStats();
   renderTasks();
+  renderAutoSendToggle();
   updateCharCount();
   renderPresetSelect();
 }
@@ -430,6 +485,8 @@ async function sendPromptToTask(task, options = {}) {
           : '当前状态不可发送，已跳过'
     };
   }
+
+  clearTaskAutoSent(task);
 
   const firstResult = await sendPromptMessageToTask(task);
   if (firstResult.ok) return firstResult;
@@ -541,6 +598,48 @@ async function sendPromptToTasks(targetTasks, label) {
   }
 }
 
+async function tryAutoSendForTask(task) {
+  if (!autoSendEnabled || isSending || !isSendableTask(task) || task.status !== 'done') {
+    return;
+  }
+
+  if (isCreateImagePage(task)) {
+    return;
+  }
+
+  const token = getTaskAutoSendToken(task);
+  if (!token || autoSentTaskTokens.has(token)) {
+    return;
+  }
+
+  markTaskAutoSent(task);
+  const result = await sendPromptToTask(task, { disableActivationRetry: true });
+
+  if (result.ok) {
+    task.status = result.status || 'generating';
+    task.progress = (statusMeta[task.status] || statusMeta.unknown).progress;
+    task.hasRunningTaskMarker = task.status === 'generating';
+    render();
+    showToast(`已自动向 ${task.name} 发送提示词`);
+    return;
+  }
+
+  if (result.status === 'limited' || result.limited) {
+    task.status = 'limited';
+    task.isLimited = true;
+    task.progress = statusMeta.limited.progress;
+    render();
+    showToast(`${task.name} 已达上限，自动发送已跳过`);
+    return;
+  }
+
+  autoSentTaskTokens.delete(token);
+
+  if (!result.skipped) {
+    showToast(`${task.name} 自动发送失败：${result.error || '未知错误'}`);
+  }
+}
+
 function bindEvents() {
   document.getElementById('filters').addEventListener('click', event => {
     const button = event.target.closest('button[data-filter]');
@@ -577,6 +676,11 @@ function bindEvents() {
   document.getElementById('refresh').addEventListener('click', async () => {
     await loadTabs();
     showToast('状态已刷新');
+  });
+
+  autoSendToggle.addEventListener('change', async () => {
+    await saveAutoSendEnabled(autoSendToggle.checked);
+    showToast(autoSendEnabled ? '已开启自动发送' : '已关闭自动发送');
   });
 
   promptPresetSelect.addEventListener('change', async () => {
@@ -669,6 +773,8 @@ function bindEvents() {
       return;
     }
 
+    const previousStatus = task.status;
+    const previousImageCount = task.imageCount || 0;
     const payload = message.payload || {};
     const meta = statusMeta[payload.status] || statusMeta.unknown;
 
@@ -683,7 +789,20 @@ function bindEvents() {
       isLimited: Boolean(payload.isLimited || payload.status === 'limited')
     });
 
+    if (task.status !== 'done') {
+      clearTaskAutoSent(task);
+    }
+
     render();
+
+    const becameDone = task.status === 'done' && (
+      previousStatus !== 'done' ||
+      task.imageCount > previousImageCount
+    );
+
+    if (becameDone) {
+      tryAutoSendForTask(task);
+    }
   });
 }
 

@@ -1,13 +1,10 @@
-const DEFAULT_PROMPT = '继续生成图片';
+const DEFAULT_PROMPT = '继续生成10张图片';
 const DEFAULT_PROMPTS = [
-  '继续生成图片',
-  '保持当前风格一致，继续生成下一张图片',
-  '基于上一张图片继续生成，细节更丰富一些',
-  '继续生成图片，画面更精致，构图更完整'
+  '继续生成10张图片',
 ];
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const existing = await chrome.storage.local.get(['promptText', 'promptPresets', 'autoRefreshSeconds']);
+  const existing = await chrome.storage.local.get(['promptText', 'promptPresets', 'autoRefreshSeconds', 'autoSendEnabled']);
   const defaults = {};
 
   if (!existing.promptText) defaults.promptText = DEFAULT_PROMPT;
@@ -15,6 +12,7 @@ chrome.runtime.onInstalled.addListener(async () => {
     defaults.promptPresets = DEFAULT_PROMPTS;
   }
   if (!existing.autoRefreshSeconds) defaults.autoRefreshSeconds = 3;
+  if (typeof existing.autoSendEnabled !== 'boolean') defaults.autoSendEnabled = false;
 
   if (Object.keys(defaults).length) {
     await chrome.storage.local.set(defaults);
@@ -69,7 +67,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       tabId,
       payload
     }).catch(() => {
-      // 侧边栏未打开时这里会失败，可以忽略。
     });
 
     sendResponse({ ok: true });

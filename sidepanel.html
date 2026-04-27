@@ -57,16 +57,26 @@
 
         <select id="promptPresetSelect" class="preset-select" aria-label="选择预设提示词"></select>
 
+        <label class="toggle-row" for="autoSendToggle">
+          <div class="toggle-copy">
+            <span class="toggle-title">自动发送</span>
+          </div>
+          <span class="switch">
+            <input id="autoSendToggle" type="checkbox" />
+            <span class="switch-slider" aria-hidden="true"></span>
+          </span>
+        </label>
+
         <div class="prompt-label prompt-label-inline">
           <span>统一发送内容</span>
           <span id="charCount">0 字</span>
         </div>
-        <textarea id="promptInput" placeholder="输入要发送给豆包的内容">继续生成图片</textarea>
+        <textarea id="promptInput" placeholder="输入要发送给豆包的内容">继续生成10张图片</textarea>
 
         <div class="preset-manager" id="presetManager" hidden>
           <div class="preset-manager-title">配置预设提示词</div>
           <div class="preset-manager-tip">每行一个预设。保存后会出现在上方下拉列表里。</div>
-          <textarea id="presetEditor" class="preset-editor" placeholder="继续生成图片&#10;保持当前风格，继续生成下一张图片"></textarea>
+          <textarea id="presetEditor" class="preset-editor" placeholder="继续生成10张图片"></textarea>
           <div class="preset-actions">
             <button class="ghost" id="addCurrentPreset" type="button">加入当前内容</button>
             <button class="ghost" id="resetPresets" type="button">恢复默认</button>

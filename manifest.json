@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "豆包生图监控台",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "在侧边栏监控不限数量的豆包生图标签页，支持预设提示词、按 DOM 状态判断生成结束，自动跳过已达对话上限的标签页，并高亮当前激活标签页。",
   "minimum_chrome_version": "116",
   "permissions": [

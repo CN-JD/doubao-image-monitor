@@ -6,15 +6,10 @@
 
   const CONFIG = {
     inputSelector: '[autocomplete="off"]',
-    inputFallbackSelectors: [
-      'textarea',
-      '[contenteditable="true"]',
-      '[role="textbox"]'
-    ],
     sendButtonSelectors: [
       '#flow-end-msg-send'
     ],
-    runningTaskSelector: 'div[data-state="closed"]',
+    runningTaskSelector: 'path[d="M7.5 11.5C7.5 9.61438 7.5 8.67157 8.08579 8.08579C8.67157 7.5 9.61438 7.5 11.5 7.5H12.5C14.3856 7.5 15.3284 7.5 15.9142 8.08579C16.5 8.67157 16.5 9.61438 16.5 11.5V12.5C16.5 14.3856 16.5 15.3284 15.9142 15.9142C15.3284 16.5 14.3856 16.5 12.5 16.5H11.5C9.61438 16.5 8.67157 16.5 8.08579 15.9142C7.5 15.3284 7.5 14.3856 7.5 12.5V11.5Z"]',
     loginModalSelector: '.login_modal',
     generatingKeywords: [
       '生成中',
@@ -36,7 +31,6 @@
     ]
   };
 
-  let lastStatus = 'unknown';
   let lastReportAt = 0;
   let lastImageCount = 0;
   let extensionAlive = true;
@@ -49,6 +43,7 @@
   let imageCountCacheAt = 0;
   let domDirty = true;
   let mutationReportTimer = null;
+  let lastReportFingerprint = '';
 
   const PAGE_TEXT_TTL_MS = 1500;
   const IMAGE_COUNT_TTL_MS = 1200;
@@ -139,7 +134,8 @@
   }
 
   function hasRunningTaskMarker() {
-    return Boolean(document.querySelector(CONFIG.runningTaskSelector));
+    const runningTask = document.querySelector(CONFIG.runningTaskSelector);
+    return runningTask && runningTask?.checkVisibility();
   }
 
   function hasLoginModal() {
@@ -225,66 +221,8 @@
     return false;
   }
 
-  function findEditableDescendant(element) {
-    if (!element) return null;
-
-    const selectors = [
-      'textarea',
-      'input:not([type="hidden"]):not([type="button"]):not([type="submit"])',
-      '[contenteditable="true"]',
-      '[contenteditable="plaintext-only"]',
-      '[role="textbox"]',
-      '[data-slate-editor="true"]',
-      '.ProseMirror'
-    ];
-
-    for (const selector of selectors) {
-      const found = element.querySelector?.(selector);
-      if (found && isElementVisible(found) && isEditableElement(found)) {
-        return found;
-      }
-    }
-
-    return null;
-  }
-
   function getInputElement() {
-    const selectors = [CONFIG.inputSelector, ...CONFIG.inputFallbackSelectors];
-    const candidates = [];
-
-    for (const selector of selectors) {
-      try {
-        const matched = Array.from(document.querySelectorAll(selector));
-        for (const element of matched) {
-          if (!element) continue;
-
-          if (isElementVisible(element) && isEditableElement(element)) {
-            candidates.push(element);
-            continue;
-          }
-
-          const child = findEditableDescendant(element);
-          if (child) candidates.push(child);
-        }
-      } catch { }
-    }
-
-    if (document.activeElement && isElementVisible(document.activeElement) && isEditableElement(document.activeElement)) {
-      candidates.unshift(document.activeElement);
-    }
-
-    const unique = Array.from(new Set(candidates));
-
-    // 优先选屏幕下方、尺寸较大的可编辑区域。聊天输入框通常在页面底部。
-    unique.sort((a, b) => {
-      const ar = a.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
-      const aScore = ar.bottom + Math.min(ar.width * ar.height, 50000) / 1000;
-      const bScore = br.bottom + Math.min(br.width * br.height, 50000) / 1000;
-      return bScore - aScore;
-    });
-
-    return unique[0] || null;
+    return document.querySelector(CONFIG.inputSelector);
   }
 
   function isElementVisible(element) {
@@ -352,42 +290,6 @@
     };
   }
 
-  function readInputValue(element) {
-    if (!element) return '';
-
-    const tag = element.tagName?.toLowerCase();
-    if (tag === 'textarea' || tag === 'input') {
-      return String(element.value || '');
-    }
-
-    return String(element.innerText || element.textContent || element.value || '');
-  }
-
-  function dispatchEditableEvents(element, value) {
-    try {
-      element.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: value
-      }));
-    } catch { }
-
-    try {
-      element.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: value
-      }));
-    } catch {
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-    element.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Process' }));
-  }
-
   // 用户验证可用的填充代码：固定使用 document.querySelector('[autocomplete="off"]') 命中的输入框。
   function setInputValue(element, value) {
     // 注意：很多 input / textarea 的 value setter 不在元素自身上，
@@ -439,91 +341,6 @@
     element.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  async function setContentEditableValue(element, value) {
-    try {
-      element.focus();
-      element.click();
-      await nextFrame();
-    } catch { }
-
-    let insertedByCommand = false;
-
-    try {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      insertedByCommand = document.execCommand('insertText', false, value);
-    } catch { }
-
-    await nextFrame();
-
-    if (!readInputValue(element).includes(value)) {
-      try {
-        element.textContent = value;
-      } catch { }
-    }
-
-    dispatchEditableEvents(element, value);
-
-    return insertedByCommand;
-  }
-
-  async function fillPromptIntoInput(element, value) {
-    const tag = element.tagName?.toLowerCase();
-
-    try {
-      element.scrollIntoView({ block: 'center', behavior: 'instant' });
-    } catch {
-      try { element.scrollIntoView({ block: 'center' }); } catch { }
-    }
-
-    try {
-      element.focus();
-      element.click();
-    } catch { }
-
-    await nextFrame();
-    await sleep(60);
-
-    if (tag === 'textarea' || tag === 'input') {
-      setInputValue(element, value);
-    } else {
-      await setContentEditableValue(element, value);
-    }
-
-    await nextFrame();
-    await sleep(160);
-
-    let actualValue = readInputValue(element).trim();
-
-    // 有些富文本编辑器焦点后会把真正的编辑节点切到 activeElement。
-    if (!actualValue.includes(value) && document.activeElement && document.activeElement !== element && isEditableElement(document.activeElement)) {
-      const active = document.activeElement;
-      const activeTag = active.tagName?.toLowerCase();
-      if (activeTag === 'textarea' || activeTag === 'input') {
-        setInputValue(active, value);
-      } else {
-        await setContentEditableValue(active, value);
-      }
-      await sleep(160);
-      actualValue = readInputValue(active).trim();
-      if (actualValue.includes(value)) {
-        return { ok: true, element: active, actualValue, usedActiveElement: true };
-      }
-    }
-
-    actualValue = readInputValue(element).trim();
-
-    return {
-      ok: actualValue.includes(value),
-      element,
-      actualValue,
-      debug: getElementDebugInfo(element)
-    };
-  }
-
   async function sendPrompt(prompt) {
     if (isConversationLimited()) {
       reportStatus(true);
@@ -544,7 +361,7 @@
       };
     }
 
-    const textarea = document.querySelector('[autocomplete="off"]') || getInputElement();
+    const textarea = document.querySelector('[autocomplete="off"]');
 
     if (!textarea) {
       return {
@@ -558,7 +375,12 @@
     // 豆包的 #flow-end-msg-send 只有输入框有内容后才会出现，
     // 所以这里必须先填内容、触发 input/change，再等待按钮渲染出来。
     await nextFrame();
-    await sleep(80);
+
+    if (textarea.innerText.trim() == '描述你想要的图片') {
+      setInputValue(textarea, prompt);
+    }
+
+    await sleep(1000);
 
     const sendButton = await waitForSendButton(3000);
     if (!sendButton) {
@@ -658,14 +480,24 @@
     }
 
     const payload = getStatusPayload();
+    const fingerprint = JSON.stringify({
+      status: payload.status,
+      imageCount: payload.imageCount,
+      hasRunningTaskMarker: payload.hasRunningTaskMarker,
+      isLimited: payload.isLimited,
+      hasInput: payload.hasInput,
+      title: payload.title,
+      url: payload.url
+    });
 
-    if (!force && payload.status === lastStatus && now - lastReportAt < REPORT_MIN_INTERVAL_MS) {
+    if (!force && fingerprint === lastReportFingerprint && now - lastReportAt < REPORT_MIN_INTERVAL_MS) {
       domDirty = false;
       return;
     }
 
     lastStatus = payload.status;
     lastReportAt = now;
+    lastReportFingerprint = fingerprint;
     domDirty = false;
 
     safeRuntimeSendMessage({
@@ -684,7 +516,7 @@
       }
 
       if (message.type === 'DOUBAO_SEND_PROMPT') {
-        sendPrompt(message.prompt || '继续生成图片')
+        sendPrompt(message.prompt || '继续生成10张图片')
           .then(result => sendResponse(result))
           .catch(error => sendResponse({ ok: false, error: error.message || String(error) }));
         return true;
