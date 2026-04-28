@@ -20,7 +20,7 @@ const statusMeta = {
   unknown: { text: '未知', icon: '？', progress: 0 }
 };
 
-let activeFilter = 'all';
+let excludeLimited = false;
 let tasks = [];
 let isSending = false;
 let promptPresets = [...DEFAULT_PROMPTS];
@@ -203,7 +203,7 @@ async function saveAutoSendEnabled(nextValue) {
 }
 
 function isCreateImagePage(task) {
-  return String(task?.url || '').startsWith('https://www.doubao.com/chat/create-image');
+  return ['https://www.doubao.com/chat/create-image', 'https://www.doubao.com/chat'].includes(task.url)
 }
 
 function isSendableTask(task) {
@@ -219,8 +219,16 @@ function getSendableTasks() {
 }
 
 function getFilteredTasks() {
-  if (activeFilter === 'all') return tasks;
-  return tasks.filter(task => task.status === activeFilter);
+  if (!excludeLimited) return tasks;
+  return tasks.filter(task => task.status !== 'limited');
+}
+
+function renderExcludeLimitedButton() {
+  const button = document.getElementById('excludeLimited');
+  if (!button) return;
+
+  button.classList.toggle('active', excludeLimited);
+  button.textContent = excludeLimited ? '包含上限' : '排除上限';
 }
 
 async function updateActiveTabMarker(options = {}) {
@@ -641,16 +649,6 @@ async function tryAutoSendForTask(task) {
 }
 
 function bindEvents() {
-  document.getElementById('filters').addEventListener('click', event => {
-    const button = event.target.closest('button[data-filter]');
-    if (!button) return;
-
-    activeFilter = button.dataset.filter;
-    document.querySelectorAll('.chip').forEach(chip => chip.classList.remove('active'));
-    button.classList.add('active');
-    renderTasks();
-  });
-
   taskList.addEventListener('click', async event => {
     const button = event.target.closest('button[data-action]');
     if (!button || isSending) return;
@@ -676,6 +674,12 @@ function bindEvents() {
   document.getElementById('refresh').addEventListener('click', async () => {
     await loadTabs();
     showToast('状态已刷新');
+  });
+
+  document.getElementById('excludeLimited').addEventListener('click', () => {
+    excludeLimited = !excludeLimited;
+    renderExcludeLimitedButton();
+    renderTasks();
   });
 
   autoSendToggle.addEventListener('change', async () => {
@@ -808,6 +812,7 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  renderExcludeLimitedButton();
   await loadSettings();
   await loadTabs();
 

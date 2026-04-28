@@ -620,6 +620,13 @@ button:active:not(:disabled) {
   color: var(--primary);
 }
 
+.small-action.active {
+  border-color: transparent;
+  background: linear-gradient(135deg, #6d5df7 0%, #4f46e5 100%);
+  color: #fff;
+  box-shadow: 0 10px 20px rgba(91, 76, 245, 0.20);
+}
+
 .task-list {
   counter-reset: task;
   display: flex;

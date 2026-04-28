@@ -94,15 +94,8 @@
     </section>
 
     <section class="toolbar" aria-label="任务筛选工具栏">
-      <div class="tabs-filter" id="filters" role="tablist" aria-label="筛选任务状态">
-        <button class="chip active" data-filter="all" type="button">全部</button>
-        <button class="chip" data-filter="generating" type="button">生成中</button>
-        <button class="chip" data-filter="done" type="button">已完成</button>
-        <button class="chip" data-filter="waiting" type="button">等待中</button>
-        <button class="chip" data-filter="failed" type="button">失败</button>
-        <button class="chip optional-filter" data-filter="limited" type="button">已达上限</button>
-        <button class="chip optional-filter" data-filter="offline" type="button">未连接</button>
-      </div>
+      <button class="small-action" id="excludeLimited" type="button">排除上限</button>
+
       <button class="small-action" id="refresh" type="button">
         <span aria-hidden="true">↻</span>
         <span>刷新</span>

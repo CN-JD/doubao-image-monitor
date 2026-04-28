@@ -134,8 +134,7 @@
   }
 
   function hasRunningTaskMarker() {
-    const runningTask = document.querySelector(CONFIG.runningTaskSelector);
-    return runningTask && runningTask?.checkVisibility();
+    return Boolean(document.querySelector(CONFIG.runningTaskSelector)?.checkVisibility());
   }
 
   function hasLoginModal() {
@@ -151,10 +150,18 @@
     return lockedByLoginModal;
   }
 
+  function hasCaptchaContainer() {
+    return Boolean(document.querySelector('#captcha_container')?.checkVisibility());
+  }
+
   async function waitForPostSendState(timeout = 2000) {
     const startedAt = Date.now();
 
     while (Date.now() - startedAt < timeout) {
+      if (hasCaptchaContainer()) {
+        return { state: 'captcha' };
+      }
+
       if (isConversationLimited()) {
         return { state: 'limited' };
       }
@@ -204,22 +211,6 @@
     return imageCountCache;
   }
 
-  function isEditableElement(element) {
-    if (!element) return false;
-
-    const tag = element.tagName?.toLowerCase();
-    const type = String(element.getAttribute('type') || '').toLowerCase();
-
-    if (tag === 'textarea') return true;
-    if (tag === 'input' && !['hidden', 'button', 'submit', 'checkbox', 'radio', 'file'].includes(type)) return true;
-    if (element.isContentEditable) return true;
-    if (element.getAttribute('contenteditable') === 'true') return true;
-    if (element.getAttribute('contenteditable') === 'plaintext-only') return true;
-    if (element.getAttribute('role') === 'textbox') return true;
-    if (element.matches?.('[data-slate-editor="true"], .ProseMirror')) return true;
-
-    return false;
-  }
 
   function getInputElement() {
     return document.querySelector(CONFIG.inputSelector);
@@ -384,6 +375,7 @@
 
     const sendButton = await waitForSendButton(3000);
     if (!sendButton) {
+      setInputValue(document.querySelector('[autocomplete="off"]'), prompt);
       return {
         ok: false,
         status: getStatus(),
@@ -402,6 +394,15 @@
         status: 'limited',
         isLimited: true,
         error: '发送后弹出“登录以解锁更多功能”，该标签页已达对话上限，后续将自动跳过。'
+      };
+    }
+
+    if (postState.state === 'captcha') {
+      reportStatus(true);
+      return {
+        ok: false,
+        status: 'waiting',
+        error: '检测到验证码弹窗，请先在该标签页手动完成验证码，再重试发送。'
       };
     }
 
