@@ -29,10 +29,14 @@ let activeTabId = null;
 let activeWindowId = null;
 let promptSaveTimer = null;
 let autoSendEnabled = false;
+let heartbeatIntervalId = null;
+let currentConfigTabId = null;
 const autoSentTaskTokens = new Set();
+const taskPrompts = new Map();
 
 const PROMPT_SAVE_DEBOUNCE_MS = 500;
 const PERIODIC_REFRESH_MS = 10000;
+const HEARTBEAT_INTERVAL_MS = 5000;
 
 const taskList = document.getElementById('taskList');
 const emptyTip = document.getElementById('emptyTip');
@@ -47,6 +51,43 @@ const presetManager = document.getElementById('presetManager');
 const presetEditor = document.getElementById('presetEditor');
 const togglePresetManager = document.getElementById('togglePresetManager');
 const autoSendToggle = document.getElementById('autoSendToggle');
+const configModal = document.getElementById('configModal');
+const configTextarea = document.getElementById('configTextarea');
+const configCharCount = document.getElementById('configCharCount');
+
+function getTaskPrompt(tabId) {
+  return taskPrompts.get(tabId) || promptInput.value || DEFAULT_PROMPT;
+}
+
+function setTaskPrompt(tabId, prompt) {
+  if (prompt && prompt.trim()) {
+    taskPrompts.set(tabId, prompt.trim());
+  } else {
+    taskPrompts.delete(tabId);
+  }
+}
+
+function clearTaskPrompt(tabId) {
+  taskPrompts.delete(tabId);
+}
+
+function openConfigModal(tabId) {
+  currentConfigTabId = tabId;
+  const currentPrompt = taskPrompts.get(tabId) || '';
+  configTextarea.value = currentPrompt;
+  updateConfigCharCount();
+  configModal.classList.add('show');
+  configTextarea.focus();
+}
+
+function closeConfigModal() {
+  configModal.classList.remove('show');
+  currentConfigTabId = null;
+}
+
+function updateConfigCharCount() {
+  configCharCount.textContent = `${configTextarea.value.length} 字`;
+}
 
 function showToast(message) {
   toast.textContent = message;
@@ -293,6 +334,19 @@ function buildOfflineTask(tab, index, error) {
   };
 }
 
+async function sendHeartbeatToTab(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'DOUBAO_HEARTBEAT' });
+  } catch {
+  }
+}
+
+async function sendHeartbeatToAllTabs() {
+  const tabIds = tasks.map(task => task.tabId).filter(Boolean);
+
+  await Promise.all(tabIds.map(tabId => sendHeartbeatToTab(tabId)));
+}
+
 async function ensureContentScript(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -308,13 +362,18 @@ async function getTabStatus(tab, index) {
     let response;
 
     try {
-      response = await chrome.tabs.sendMessage(tab.id, { type: 'DOUBAO_GET_STATUS' });
+      response = await chrome.tabs.sendMessage(tab.id, { type: 'DOUBAO_HEARTBEAT' });
     } catch {
       await ensureContentScript(tab.id);
-      response = await chrome.tabs.sendMessage(tab.id, { type: 'DOUBAO_GET_STATUS' });
+      response = await chrome.tabs.sendMessage(tab.id, { type: 'DOUBAO_HEARTBEAT' });
     }
 
-    const payload = response?.payload || {};
+    if (!response?.activated) {
+      return buildOfflineTask(tab, index, 'content script 未激活');
+    }
+
+    const statusResponse = await chrome.tabs.sendMessage(tab.id, { type: 'DOUBAO_GET_STATUS' });
+    const payload = statusResponse?.payload || {};
     const meta = statusMeta[payload.status] || statusMeta.unknown;
 
     return {
@@ -368,8 +427,10 @@ function renderTasks() {
   rows.forEach(task => {
     const meta = statusMeta[task.status] || statusMeta.unknown;
     const isActiveTab = task.tabId === activeTabId;
+    const hasCustomPrompt = taskPrompts.has(task.tabId);
     const card = document.createElement('article');
     card.className = `task-card ${escapeHtml(task.status)}${isActiveTab ? ' active-tab' : ''}`;
+    card.dataset.tabId = task.tabId;
 
     const detail = task.error
       ? escapeHtml(task.error)
@@ -380,7 +441,11 @@ function renderTasks() {
     const sendDisabled = !isSendableTask(task);
     const sendTitle = sendDisabled
       ? '仅在任务已结束、未达上限且输入框可用时发送'
-      : '发送当前提示词';
+      : hasCustomPrompt
+        ? '发送该任务单独配置的内容'
+        : '发送当前提示词';
+
+    const configTitle = hasCustomPrompt ? '已配置单独内容，点击修改' : '配置该任务的发送内容';
 
     card.innerHTML = `
       <div class="task-top">
@@ -400,8 +465,8 @@ function renderTasks() {
         <span title="${detail}">${detail}</span>
       </div>
       <div class="card-actions">
-        <button class="ghost" data-action="focus" data-tab-id="${task.tabId}">打开标签页</button>
         <button class="secondary" data-action="send" data-tab-id="${task.tabId}" ${sendDisabled ? 'disabled' : ''} title="${sendTitle}">发送当前</button>
+        <button class="ghost ${hasCustomPrompt ? 'has-config' : ''}" data-action="config" data-tab-id="${task.tabId}" title="${configTitle}">配置</button>
       </div>
     `;
 
@@ -450,7 +515,7 @@ async function sendPromptMessageToTask(task) {
     const response = await withTimeout(
       chrome.tabs.sendMessage(task.tabId, {
         type: 'DOUBAO_SEND_PROMPT',
-        prompt: promptInput.value || DEFAULT_PROMPT
+        prompt: getTaskPrompt(task.tabId)
       }),
       6000,
       '发送等待超时。后台标签页可能暂停了页面渲染，准备激活标签页后重试。'
@@ -651,19 +716,26 @@ async function tryAutoSendForTask(task) {
 function bindEvents() {
   taskList.addEventListener('click', async event => {
     const button = event.target.closest('button[data-action]');
-    if (!button || isSending) return;
+    if (button) {
+      const tabId = Number(button.dataset.tabId);
+      const task = tasks.find(item => item.tabId === tabId);
+      if (!task) return;
 
-    const tabId = Number(button.dataset.tabId);
-    const task = tasks.find(item => item.tabId === tabId);
-    if (!task) return;
-
-    if (button.dataset.action === 'focus') {
-      await focusTab(tabId);
+      if (button.dataset.action === 'send') {
+        if (isSending) return;
+        await sendPromptToTasks([task], task.name);
+      } else if (button.dataset.action === 'config') {
+        openConfigModal(tabId);
+      }
       return;
     }
 
-    if (button.dataset.action === 'send') {
-      await sendPromptToTasks([task], task.name);
+    const card = event.target.closest('.task-card');
+    if (card) {
+      const tabId = Number(card.dataset.tabId);
+      if (tabId) {
+        await focusTab(tabId);
+      }
     }
   });
 
@@ -807,6 +879,49 @@ function bindEvents() {
     if (becameDone) {
       tryAutoSendForTask(task);
     }
+
+    const becameFailed = task.status === 'failed' && previousStatus !== 'failed';
+
+    if (becameFailed && autoSendEnabled) {
+      autoSendEnabled = false;
+      renderAutoSendToggle();
+      chrome.storage.local.set({ autoSendEnabled: false });
+      showToast('检测到生成失败，已自动关闭自动发送');
+    }
+  });
+
+  configModal.addEventListener('click', event => {
+    if (event.target === configModal) {
+      closeConfigModal();
+    }
+  });
+
+  document.getElementById('configSave').addEventListener('click', () => {
+    if (currentConfigTabId) {
+      setTaskPrompt(currentConfigTabId, configTextarea.value);
+      renderTasks();
+      const task = tasks.find(item => item.tabId === currentConfigTabId);
+      showToast(`已保存 ${task?.name || '任务'} 的单独配置`);
+      closeConfigModal();
+    }
+  });
+
+  document.getElementById('configClear').addEventListener('click', () => {
+    if (currentConfigTabId) {
+      clearTaskPrompt(currentConfigTabId);
+      renderTasks();
+      const task = tasks.find(item => item.tabId === currentConfigTabId);
+      showToast(`已清除 ${task?.name || '任务'} 的单独配置`);
+      closeConfigModal();
+    }
+  });
+
+  document.getElementById('configCancel').addEventListener('click', () => {
+    closeConfigModal();
+  });
+
+  configTextarea.addEventListener('input', () => {
+    updateConfigCharCount();
   });
 }
 
@@ -815,6 +930,8 @@ async function init() {
   renderExcludeLimitedButton();
   await loadSettings();
   await loadTabs();
+
+  heartbeatIntervalId = window.setInterval(sendHeartbeatToAllTabs, HEARTBEAT_INTERVAL_MS);
 
   window.setInterval(async () => {
     if (!document.hidden && !isSending) {

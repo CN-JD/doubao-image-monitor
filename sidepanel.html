@@ -108,6 +108,26 @@
     </div>
   </main>
 
+  <div class="modal" id="configModal" role="dialog" aria-modal="true" aria-labelledby="configModalTitle">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="configModalTitle">配置发送内容</h3>
+      </div>
+      <div class="modal-body">
+        <div class="modal-label">
+          <span>单独发送内容</span>
+          <span id="configCharCount">0 字</span>
+        </div>
+        <textarea id="configTextarea" placeholder="输入该任务单独的发送内容，留空则使用统一发送内容"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost" id="configClear" type="button">清除</button>
+        <button class="ghost" id="configCancel" type="button">取消</button>
+        <button class="secondary" id="configSave" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="sidepanel.js"></script>
 </body>

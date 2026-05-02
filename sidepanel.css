@@ -645,6 +645,7 @@ button:active:not(:disabled) {
   border-radius: var(--radius-lg);
   background: rgba(255, 255, 255, 0.90);
   box-shadow: var(--shadow-soft);
+  cursor: pointer;
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
 
@@ -905,6 +906,89 @@ button:active:not(:disabled) {
 
 .card-actions .secondary:hover:not(:disabled) {
   background: var(--primary-soft);
+}
+
+.card-actions .ghost.has-config {
+  border-color: rgba(91, 76, 245, 0.35);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(18, 22, 33, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.modal.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 360px;
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: 0 24px 48px rgba(18, 24, 40, 0.18);
+  transform: translateY(10px);
+  transition: transform 0.2s ease;
+}
+
+.modal.show .modal-content {
+  transform: translateY(0);
+}
+
+.modal-header {
+  padding: 16px 16px 0;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 17px;
+  font-weight: 780;
+}
+
+.modal-body {
+  padding: 14px 16px;
+}
+
+.modal-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #60687a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.modal-body textarea {
+  min-height: 100px;
+  max-height: 180px;
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.modal-actions button {
+  min-height: 38px;
 }
 
 .empty-tip {

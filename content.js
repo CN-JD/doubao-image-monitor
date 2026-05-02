@@ -28,6 +28,9 @@
       '继续生成',
       '下载',
       '保存图片'
+    ],
+    limitedKeywords: [
+      '今天的生图次数已达到上限'
     ]
   };
 
@@ -36,7 +39,7 @@
   let extensionAlive = true;
   let intervalId = null;
   let observer = null;
-  let lockedByLoginModal = false;
+  let limitedLocked = false;
   let pageTextCache = '';
   let pageTextCacheAt = 0;
   let imageCountCache = 0;
@@ -44,11 +47,15 @@
   let domDirty = true;
   let mutationReportTimer = null;
   let lastReportFingerprint = '';
+  let activated = false;
+  let lastHeartbeatAt = 0;
+  let heartbeatCheckIntervalId = null;
 
   const PAGE_TEXT_TTL_MS = 1500;
   const IMAGE_COUNT_TTL_MS = 1200;
   const REPORT_MIN_INTERVAL_MS = 2500;
   const MUTATION_REPORT_DEBOUNCE_MS = 300;
+  const HEARTBEAT_TIMEOUT_MS = 15000;
 
   function isContextInvalidatedError(error) {
     const message = String(error?.message || error || '');
@@ -59,6 +66,40 @@
 
   function cleanupAfterInvalidated() {
     extensionAlive = false;
+    deactivate();
+  }
+
+  function activate() {
+    if (activated || !extensionAlive) return;
+    activated = true;
+
+    observer = new MutationObserver(() => {
+      markDomDirty();
+      scheduleMutationReport();
+    });
+
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['disabled', 'aria-disabled', 'class', 'data-state']
+      });
+    }
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+
+    intervalId = window.setInterval(() => reportStatus(false), 5000);
+    heartbeatCheckIntervalId = window.setInterval(checkHeartbeat, 3000);
+
+    reportStatus(true);
+  }
+
+  function deactivate() {
+    if (!activated) return;
+    activated = false;
 
     try {
       if (observer) observer.disconnect();
@@ -73,9 +114,34 @@
     } catch { }
 
     try {
+      if (heartbeatCheckIntervalId) window.clearInterval(heartbeatCheckIntervalId);
+    } catch { }
+
+    try {
       window.removeEventListener('focus', handleFocus);
       window.removeEventListener('visibilitychange', handleVisibilityChange);
     } catch { }
+
+    observer = null;
+    intervalId = null;
+    mutationReportTimer = null;
+    heartbeatCheckIntervalId = null;
+  }
+
+  function checkHeartbeat() {
+    if (!activated || !extensionAlive) return;
+
+    if (Date.now() - lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
+      deactivate();
+    }
+  }
+
+  function handleHeartbeat() {
+    lastHeartbeatAt = Date.now();
+
+    if (!activated && extensionAlive) {
+      activate();
+    }
   }
 
   async function safeRuntimeSendMessage(message) {
@@ -137,17 +203,20 @@
     return Boolean(document.querySelector(CONFIG.runningTaskSelector)?.checkVisibility());
   }
 
-  function hasLoginModal() {
+  function hasLimitModal() {
     return Boolean(document.querySelector(CONFIG.loginModalSelector));
   }
 
-  function isConversationLimited() {
-
-    if (hasLoginModal()) {
-      lockedByLoginModal = true;
+  function isLimited() {
+    if (hasLimitModal()) {
+      limitedLocked = true;
     }
 
-    return lockedByLoginModal;
+    if (!limitedLocked && textIncludesAny(getPageText(), CONFIG.limitedKeywords)) {
+      limitedLocked = true;
+    }
+
+    return limitedLocked;
   }
 
   function hasCaptchaContainer() {
@@ -162,7 +231,7 @@
         return { state: 'captcha' };
       }
 
-      if (isConversationLimited()) {
+      if (isLimited()) {
         return { state: 'limited' };
       }
 
@@ -281,6 +350,10 @@
     };
   }
 
+  function refreshPage() {
+    window.location.reload();
+  }
+
   // 用户验证可用的填充代码：固定使用 document.querySelector('[autocomplete="off"]') 命中的输入框。
   function setInputValue(element, value) {
     // 注意：很多 input / textarea 的 value setter 不在元素自身上，
@@ -333,7 +406,7 @@
   }
 
   async function sendPrompt(prompt) {
-    if (isConversationLimited()) {
+    if (isLimited()) {
       reportStatus(true);
       return {
         ok: false,
@@ -375,7 +448,8 @@
 
     const sendButton = await waitForSendButton(3000);
     if (!sendButton) {
-      setInputValue(document.querySelector('[autocomplete="off"]'), prompt);
+      refreshPage();
+
       return {
         ok: false,
         status: getStatus(),
@@ -422,7 +496,7 @@
     const imageCount = getLikelyImageCount();
     const input = getInputElement();
 
-    if (isConversationLimited()) {
+    if (isLimited()) {
       return 'limited';
     }
 
@@ -457,7 +531,7 @@
     const imageCount = getLikelyImageCount();
     const input = getInputElement();
     const runningTask = hasRunningTaskMarker();
-    const limited = isConversationLimited();
+    const limited = isLimited();
 
     return {
       status,
@@ -496,7 +570,6 @@
       return;
     }
 
-    lastStatus = payload.status;
     lastReportAt = now;
     lastReportFingerprint = fingerprint;
     domDirty = false;
@@ -511,12 +584,20 @@
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!message || typeof message !== 'object') return false;
 
+      if (message.type === 'DOUBAO_HEARTBEAT') {
+        handleHeartbeat();
+        sendResponse({ ok: true, activated });
+        return true;
+      }
+
       if (message.type === 'DOUBAO_GET_STATUS') {
+        handleHeartbeat();
         sendResponse({ ok: true, payload: getStatusPayload() });
         return true;
       }
 
       if (message.type === 'DOUBAO_SEND_PROMPT') {
+        handleHeartbeat();
         sendPrompt(message.prompt || '继续生成10张图片')
           .then(result => sendResponse(result))
           .catch(error => sendResponse({ ok: false, error: error.message || String(error) }));
@@ -538,29 +619,6 @@
 
   function handleVisibilityChange() {
     markDomDirty();
-    reportStatus(true);
-  }
-
-  observer = new MutationObserver(() => {
-    markDomDirty();
-    scheduleMutationReport();
-  });
-
-  if (document.body && extensionAlive) {
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ['disabled', 'aria-disabled', 'class', 'data-state']
-    });
-  }
-
-  if (extensionAlive) {
-    window.addEventListener('focus', handleFocus);
-    window.addEventListener('visibilitychange', handleVisibilityChange);
-
-    intervalId = window.setInterval(() => reportStatus(false), 5000);
     reportStatus(true);
   }
 })();
